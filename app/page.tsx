@@ -48,7 +48,7 @@ export default function Home() {
   }
 
   useEffect(() => {
-    const socket = new WebSocket("ws://localhost:8080");
+    const socket = new WebSocket("wss://lan-drop-production.up.railway.app");
     socket.onopen = () => console.log("Connected to server");
     socketref.current = socket;
     socket.onmessage = (events) => {

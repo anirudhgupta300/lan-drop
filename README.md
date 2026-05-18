@@ -1,36 +1,62 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# LanDrop 📡
 
-## Getting Started
+A peer-to-peer file sharing app that works directly in the browser. No account needed, no file size limits from a server — files go straight from one device to another.
 
-First, run the development server:
+## How it works
 
+1. One person creates a room and gets a 6-character code
+2. The other person enters that code to join
+3. A direct connection is established between the two devices
+4. Files are sent directly — they never touch a server
+
+The only thing that goes through a server is the initial handshake to help the two devices find each other. After that, all data is peer-to-peer and end-to-end encrypted.
+
+## Built with
+
+- **Next.js** — frontend and API routes
+- **WebRTC** — direct peer-to-peer file transfer
+- **Ably** — real-time signaling to connect devices
+- **Vercel** — deployment
+
+## Running locally
+
+**1. Clone the repo**
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone https://github.com/yourusername/lan-drop.git
+cd lan-drop
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+**2. Install dependencies**
+```bash
+npm install
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+**3. Set up environment variables**
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Create a `.env.local` file in the root:
+```
+ABLY_API_KEY=your_ably_api_key_here
+```
 
-## Learn More
+Get a free API key at [ably.com](https://ably.com).
 
-To learn more about Next.js, take a look at the following resources:
+**4. Run the dev server**
+```bash
+npm run dev
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Open [http://localhost:3000](http://localhost:3000) in two browser tabs to test.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## How to use
 
-## Deploy on Vercel
+- Open the app on two devices (or two browser tabs)
+- On device A — click **Create room**, note the 6-character code
+- On device B — type the code and click **Join room**
+- Once connected, pick a file on device A and hit **Send file**
+- Device B will automatically download it
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Notes
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Works best when both devices are on the same WiFi network
+- Works across different networks too but may be slower
+- Files are transferred directly between devices — nothing is stored anywhere

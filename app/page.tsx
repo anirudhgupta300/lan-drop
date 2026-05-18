@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from "react";
+import Ably from 'ably';
 
 const chunksize = 16000;
 const config = {
@@ -13,25 +14,22 @@ export default function Home() {
   const [selectedFile, setSelectedFile] = useState<File|null>(null);
   const codeRef = useRef('');
   const joinCodeRef = useRef('');
-  const socketref = useRef<WebSocket|null>(null);
   const peerref = useRef<RTCPeerConnection|null>(null);
   const channelRef = useRef<RTCDataChannel|null>(null);
+  const ablyChannelRef = useRef<Ably.RealtimeChannel|null>(null);
+  const iceCandidatesQueue = useRef<RTCIceCandidateInit[]>([]);
 
   const CreateRoom = () => {
     const NewCode = Math.random().toString(36).substring(2,8).toUpperCase();
     setcode(NewCode);
     Setshowcode(true);
     codeRef.current = NewCode;
-    if(socketref.current?.readyState == WebSocket.OPEN){
-      socketref.current.send(JSON.stringify({ type: 'join', room: NewCode }))
-    }
+    ablyChannelRef.current?.publish('signal', { type: 'join', room: NewCode, role: 'creator' });
   }
 
   const JoinRoom = () => {
     joinCodeRef.current = joinCode;
-    if(socketref.current?.readyState == WebSocket.OPEN){
-      socketref.current.send(JSON.stringify({ type: 'join', room: joinCode }))
-    }
+    ablyChannelRef.current?.publish('signal', { type: 'join', room: joinCode, role: 'joiner' });
   }
 
   const sendFile = () => {
@@ -48,17 +46,24 @@ export default function Home() {
   }
 
   useEffect(() => {
-    const socket = new WebSocket("wss://lan-drop-production.up.railway.app");
-    socket.onopen = () => console.log("Connected to server");
-    socketref.current = socket;
-    socket.onmessage = (events) => {
-      const message = JSON.parse(events.data);
-      if(message.type == 'ready'){
-        console.log('ready received')
+    const client = new Ably.Realtime({ authUrl: '/api/ably' });
+    const channel = client.channels.get('signaling');
+    ablyChannelRef.current = channel;
+
+    channel.subscribe('signal', (msg) => {
+      const message = msg.data;
+
+      if(message.type == 'join'){
+        if(message.role == 'joiner' && codeRef.current == message.room){
+          channel.publish('signal', { type: 'ready', room: message.room })
+        }
+      } else if(message.type == 'ready'){
+        if(codeRef.current !== message.room) return;
+        iceCandidatesQueue.current = [];
         peerref.current = new RTCPeerConnection(config);
         peerref.current.onicecandidate = (event) => {
           if(event.candidate){
-            socketref.current?.send(JSON.stringify({ type: 'ice', room: codeRef.current, data: event.candidate }))
+            channel.publish('signal', { type: 'ice', room: codeRef.current, data: event.candidate })
           }
         }
         const sendChannel = peerref.current.createDataChannel('sendchannel');
@@ -66,21 +71,22 @@ export default function Home() {
         channelRef.current = sendChannel;
         peerref.current.createOffer().then((offer) => {
           peerref.current?.setLocalDescription(offer);
-          socketref.current?.send(JSON.stringify({ type: 'offer', room: codeRef.current, data: offer }))
+          channel.publish('signal', { type: 'offer', room: codeRef.current, data: offer })
         })
       } else if(message.type == 'offer'){
-        console.log('ready offer')
+        if(joinCodeRef.current !== message.room) return;
+        iceCandidatesQueue.current = [];
         peerref.current = new RTCPeerConnection(config);
         peerref.current.onicecandidate = (event) => {
           if(event.candidate){
-            socketref.current?.send(JSON.stringify({ type: 'ice', room: joinCodeRef.current, data: event.candidate }))
+            channel.publish('signal', { type: 'ice', room: joinCodeRef.current, data: event.candidate })
           }
         }
         peerref.current.ondatachannel = (e) => {
-          const channel = e.channel;
-          channel.binaryType = "arraybuffer";
+          const ch = e.channel;
+          ch.binaryType = 'arraybuffer';
           const chunks: ArrayBuffer[] = [];
-          channel.onmessage = (me) => {
+          ch.onmessage = (me) => {
             if(typeof me.data == 'string'){
               const msg = JSON.parse(me.data);
               if(msg.type == 'done'){
@@ -96,19 +102,37 @@ export default function Home() {
             }
           }
         }
-        peerref.current.setRemoteDescription(message.data);
-        peerref.current.createAnswer().then((answer) => {
+        peerref.current.setRemoteDescription(message.data).then(() => {
+          iceCandidatesQueue.current.forEach(candidate => {
+            peerref.current?.addIceCandidate(candidate)
+          })
+          iceCandidatesQueue.current = [];
+          return peerref.current?.createAnswer()
+        }).then((answer) => {
+          if(!answer) return;
           peerref.current?.setLocalDescription(answer);
-          socketref.current?.send(JSON.stringify({ type: 'answer', room: joinCodeRef.current, data: answer }))
+          channel.publish('signal', { type: 'answer', room: joinCodeRef.current, data: answer })
         })
       } else if(message.type == 'ice'){
-        peerref.current?.addIceCandidate(message.data);
+        const myRoom = codeRef.current || joinCodeRef.current;
+        if(message.room !== myRoom) return;
+        if(peerref.current?.remoteDescription){
+          peerref.current.addIceCandidate(message.data)
+        } else {
+          iceCandidatesQueue.current.push(message.data)
+        }
       } else if(message.type == 'answer'){
-        console.log('ready answer')
-        peerref.current?.setRemoteDescription(message.data);
+        if(codeRef.current !== message.room) return;
+        peerref.current?.setRemoteDescription(message.data).then(() => {
+          iceCandidatesQueue.current.forEach(candidate => {
+            peerref.current?.addIceCandidate(candidate)
+          })
+          iceCandidatesQueue.current = [];
+        })
       }
-    }
-    return () => socket.close()
+    });
+
+    return () => client.close();
   }, [])
 
   return (

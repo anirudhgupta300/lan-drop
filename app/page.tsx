@@ -2,7 +2,8 @@
 import { useEffect, useRef, useState } from "react";
 import Ably from 'ably';
 
-const chunksize = 16000;
+
+const chunksize = 64000;
 const config = {
   iceServers:[{ urls: 'stun:stun.l.google.com:19302' }]
 }
@@ -18,56 +19,12 @@ export default function Home() {
   const joinCodeRef = useRef('');
   const peerref = useRef<RTCPeerConnection|null>(null);
   const channelRef = useRef<RTCDataChannel|null>(null);
-  const ablyChannelRef = useRef<Ably.RealtimeChannel|null>(null);
   const iceCandidatesQueue = useRef<RTCIceCandidateInit[]>([]);
+  const ablyclientref = useRef<Ably.Realtime|null>(null);
 
-  const CreateRoom = () => {
-    const NewCode = Math.random().toString(36).substring(2,8).toUpperCase();
-    setcode(NewCode);
-    Setshowcode(true);
-    codeRef.current = NewCode;
-    setStatus('waiting for someone to join');
-    setError('');
-    ablyChannelRef.current?.publish('signal', { type: 'join', room: NewCode, role: 'creator' });
-  }
 
-  const JoinRoom = () => {
-    if(!joinCode || joinCode.length !== 6){ setError('enter a valid 6-character code'); return; }
-    joinCodeRef.current = joinCode;
-    setStatus('joining room...');
-    setError('');
-    ablyChannelRef.current?.publish('signal', { type: 'join', room: joinCode, role: 'joiner' });
-  }
 
-  const sendFile = () => {
-    if(!selectedFile){ setError('pick a file first'); return; }
-    if(!channelRef.current || channelRef.current.readyState !== 'open'){ setError('not connected yet'); return; }
-    setError('');
-    setStatus('sending...');
-    const reader = new FileReader();
-    reader.readAsArrayBuffer(selectedFile);
-    reader.onload = (e) => {
-      const arraybuffer = e.target?.result as ArrayBuffer;
-      try {
-        for(let i = 0; i < arraybuffer.byteLength; i += chunksize){
-          channelRef.current?.send(arraybuffer.slice(i, i + chunksize))
-        }
-        channelRef.current?.send(JSON.stringify({ type: 'done', filename: selectedFile.name }))
-        setStatus('sent!')
-      } catch { setError('send failed') }
-    }
-    reader.onerror = () => setError('could not read file')
-  }
-
-  useEffect(() => {
-    const client = new Ably.Realtime({ authUrl: '/api/ably' });
-    client.connection.on('connected', () => setStatus('ready'));
-    client.connection.on('failed', () => { setError('could not connect'); setStatus('error'); });
-    client.connection.on('disconnected', () => setStatus('reconnecting...'));
-
-    const channel = client.channels.get('signaling');
-    ablyChannelRef.current = channel;
-
+  const setupchannel = (channel:Ably.RealtimeChannel) =>{
     channel.subscribe('signal', (msg) => {
       const message = msg.data;
       if(message.type == 'join'){
@@ -154,7 +111,61 @@ export default function Home() {
         }).catch(() => setError('set answer failed'))
       }
     });
+  }
 
+
+  const CreateRoom = () => {
+    const NewCode = Math.random().toString(36).substring(2,8).toUpperCase();
+    setcode(NewCode);
+    Setshowcode(true);
+    const channel = ablyclientref.current?.channels.get(`room-${NewCode}`)
+    codeRef.current = NewCode;
+        if(channel){
+      setupchannel(channel);
+    }
+    setStatus('waiting for someone to join');
+    setError('');
+    channel?.publish('signal', { type: 'join', room: NewCode, role: 'creator' });
+  }
+
+  const JoinRoom = () => {
+    if(!joinCode || joinCode.length !== 6){ setError('enter a valid 6-character code'); return; }
+    joinCodeRef.current = joinCode;
+    const channel = ablyclientref.current?.channels.get(`room-${joinCodeRef.current}`)
+    if(channel){
+      setupchannel(channel)
+    }
+    setStatus('joining room...');
+    setError('');
+    channel?.publish('signal', { type: 'join', room: joinCode, role: 'joiner' });
+  }
+
+  const sendFile = () => {
+    if(!selectedFile){ setError('pick a file first'); return; }
+    if(!channelRef.current || channelRef.current.readyState !== 'open'){ setError('not connected yet'); return; }
+    setError('');
+    setStatus('sending...');
+    const reader = new FileReader();
+    reader.readAsArrayBuffer(selectedFile);
+    reader.onload = (e) => {
+      const arraybuffer = e.target?.result as ArrayBuffer;
+      try {
+        for(let i = 0; i < arraybuffer.byteLength; i += chunksize){
+          channelRef.current?.send(arraybuffer.slice(i, i + chunksize))
+        }
+        channelRef.current?.send(JSON.stringify({ type: 'done', filename: selectedFile.name }))
+        setStatus('sent!')
+      } catch { setError('send failed') }
+    }
+    reader.onerror = () => setError('could not read file')
+  }
+
+  useEffect(() => {
+    const client = new Ably.Realtime({ authUrl: '/api/ably' });
+    ablyclientref.current = client;
+    client.connection.on('connected', () => setStatus('ready'));
+    client.connection.on('failed', () => { setError('could not connect'); setStatus('error'); });
+    client.connection.on('disconnected', () => setStatus('reconnecting...'));
     return () => client.close();
   }, [])
 

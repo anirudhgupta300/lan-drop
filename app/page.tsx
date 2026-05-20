@@ -23,6 +23,8 @@ export default function Home() {
   const iceCandidatesQueue = useRef<RTCIceCandidateInit[]>([]);
   const ablyclientref = useRef<Ably.Realtime|null>(null);
   const ablyChannelRef = useRef<Ably.RealtimeChannel|null>(null);
+  const [percentage, Setpercentage] = useState(0);
+  const filesizeref = useRef(0);
 
   const resetState = () => {
     peerref.current?.close();
@@ -39,6 +41,7 @@ export default function Home() {
     setPhase('idle');
     setError('');
     setStatus('ready');
+    Setpercentage(0);
   }
 
   const leaveRoom = () => {
@@ -103,6 +106,7 @@ export default function Home() {
           const ch = e.channel;
           ch.binaryType = 'arraybuffer';
           const chunks: ArrayBuffer[] = [];
+          let bytesReceived = 0;
           ch.onmessage = (me) => {
             if(typeof me.data == 'string'){
               try {
@@ -113,9 +117,20 @@ export default function Home() {
                   const a = document.createElement('a');
                   a.href = url; a.download = msg.filename; a.click();
                   setStatus('file received!')
+                  Setpercentage(100);
+                } else if(msg.type == 'start'){
+                  filesizeref.current = msg.filesize;
+                  bytesReceived = 0;
+                  Setpercentage(0);
                 }
               } catch { setError('receive error') }
-            } else { chunks.push(me.data) }
+            } else {
+              chunks.push(me.data);
+              bytesReceived += (me.data as ArrayBuffer).byteLength;
+              if(filesizeref.current > 0){
+                Setpercentage(Math.min(Math.floor((bytesReceived / filesizeref.current) * 100), 99));
+              }
+            }
           }
         }
         peerref.current.setRemoteDescription(message.data).then(() => {
@@ -175,15 +190,24 @@ export default function Home() {
     if(!channelRef.current || channelRef.current.readyState !== 'open'){ setError('not connected yet'); return; }
     setError('');
     setStatus('sending...');
+    Setpercentage(0);
     const reader = new FileReader();
     reader.readAsArrayBuffer(selectedFile);
     reader.onload = (e) => {
+      const filesize = selectedFile.size;
       const arraybuffer = e.target?.result as ArrayBuffer;
+      channelRef.current?.send(JSON.stringify({
+        type: 'start',
+        filename: selectedFile.name,
+        filesize: selectedFile.size
+      }))
       try {
         for(let i = 0; i < arraybuffer.byteLength; i += chunksize){
           channelRef.current?.send(arraybuffer.slice(i, i + chunksize))
+          Setpercentage(Math.min(Math.floor(((i + chunksize) / filesize) * 100), 99));
         }
         channelRef.current?.send(JSON.stringify({ type: 'done', filename: selectedFile.name }))
+        Setpercentage(100);
         setStatus('sent!')
       } catch { setError('send failed') }
     }
@@ -227,8 +251,6 @@ export default function Home() {
         .err { font-size: 12px; color: #f87171; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.15); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; }
         .panel { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 18px; padding: 18px; margin-bottom: 10px; backdrop-filter: blur(20px); }
         .panel-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: #4a4a6a; margin-bottom: 12px; }
-        .code-slot { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 14px; text-align: center; font-size: 30px; font-weight: 900; letter-spacing: 9px; color: #a78bfa; margin-bottom: 12px; min-height: 66px; display: flex; align-items: center; justify-content: center; }
-        .empty-code { font-size: 12px; font-weight: 500; letter-spacing: 0.05em; color: #2e2e4a; }
         .btn { width: 100%; padding: 12px; border-radius: 12px; font-size: 13px; font-family: inherit; font-weight: 600; cursor: pointer; transition: opacity 0.15s, transform 0.1s; border: none; letter-spacing: 0.02em; }
         .btn:active { transform: scale(0.98); }
         .btn-violet { background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%); color: #fff; }
@@ -246,7 +268,6 @@ export default function Home() {
         .file-hint { font-size: 12px; color: #3a3a5a; font-weight: 500; }
         .file-chosen { font-size: 12px; color: #a78bfa; font-weight: 600; word-break: break-all; }
         .foot { text-align: center; margin-top: 2rem; font-size: 11px; color: #2a2a3a; letter-spacing: 0.05em; }
-
         .waiting-box { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem 1rem; gap: 16px; }
         .waiting-code { font-size: 32px; font-weight: 900; letter-spacing: 10px; color: #a78bfa; }
         .waiting-label { font-size: 13px; color: #6d6d8a; }
@@ -256,11 +277,16 @@ export default function Home() {
         .orbit-dot:nth-child(2) { animation-delay: -0.66s; background: #f472b6; }
         .orbit-dot:nth-child(3) { animation-delay: -1.33s; background: #38bdf8; }
         @keyframes orbit { from { transform: rotate(0deg) translateX(28px); } to { transform: rotate(360deg) translateX(28px); } }
-
         .connected-box { display: flex; flex-direction: column; align-items: center; padding: 1rem 0 0.5rem; gap: 6px; }
         .connected-icon { width: 44px; height: 44px; border-radius: 50%; background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.2); display: flex; align-items: center; justify-content: center; font-size: 20px; margin-bottom: 4px; }
         .connected-label { font-size: 13px; font-weight: 600; color: #22c55e; }
         .connected-sub { font-size: 11px; color: #6d6d8a; }
+        .progress-wrap { margin-bottom: 10px; }
+        .progress-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+        .progress-label { font-size: 11px; color: #6d6d8a; }
+        .progress-pct { font-size: 11px; font-weight: 600; }
+        .progress-track { background: rgba(255,255,255,0.06); border-radius: 999px; height: 4px; overflow: hidden; }
+        .progress-fill { height: 100%; border-radius: 999px; transition: width 0.15s ease; }
       `}</style>
 
       <div className="wrap">
@@ -341,12 +367,28 @@ export default function Home() {
               </div>
               <div style={{ height: 12 }} />
               <div className="file-pick">
-                <input type="file" onChange={(e) => { setSelectedFile(e.target.files?.[0] || null); setError(''); }} />
+                <input type="file" onChange={(e) => { setSelectedFile(e.target.files?.[0] || null); setError(''); Setpercentage(0); }} />
                 {selectedFile
                   ? <div className="file-chosen">📎 {selectedFile.name}</div>
                   : <div className="file-hint">tap to choose a file</div>
                 }
               </div>
+              {percentage > 0 && (
+                <div className="progress-wrap">
+                  <div className="progress-meta">
+                    <span className="progress-label">{percentage === 100 ? 'complete' : 'transferring...'}</span>
+                    <span className="progress-pct" style={{ color: percentage === 100 ? '#22c55e' : '#a78bfa' }}>{percentage}%</span>
+                  </div>
+                  <div className="progress-track">
+                    <div className="progress-fill" style={{
+                      width: `${percentage}%`,
+                      background: percentage === 100
+                        ? 'linear-gradient(90deg, #22c55e, #16a34a)'
+                        : 'linear-gradient(90deg, #7c3aed, #a855f7, #f472b6)'
+                    }} />
+                  </div>
+                </div>
+              )}
               <button className="btn btn-violet" onClick={sendFile} style={{ opacity: selectedFile ? 1 : 0.35, marginBottom: 8 }}>
                 Send file
               </button>
